@@ -278,6 +278,8 @@ def check_properties_each(f_slice, cons, temp, vol, sp):
     
     vpar = np.linspace(-cons.f0_nvp,cons.f0_nvp,2*cons.f0_nvp+1)*cons.f0_dvp
     vperp = np.linspace(0,cons.f0_nmu,cons.f0_nmu+1)*cons.f0_dsmu
+    vperp1 = vperp.copy()
+    vperp1[0] = vperp1[1]/3. #f0_mu0_factor
     
     
 #     print('vth',vth*torch.from_numpy(cons.f0_dsmu))
@@ -286,13 +288,14 @@ def check_properties_each(f_slice, cons, temp, vol, sp):
     
     vpar = torch.tensor(vpar).float().to(device)
     vperp = torch.tensor(vperp).float().to(device)
+    vperp1 = torch.tensor(vperp1).float().to(device)
         
     mass = cons.ptl_mass[sp]
     conv_factor_notemp = 1/np.sqrt((2*np.pi*cons.sml_ev2j/mass)**3)
     temp_factor = 1/torch.sqrt(temp)
     
-    smu_n = cons.f0_dsmu/3 # smu_n = f0_dsmu/f0_mu0_factor, f0_mu0_factor = 3
-    f_slice_norm = torch.einsum('ijk,i -> ijk',f_slice,temp_factor)*conv_factor_notemp/smu_n
+    #smu_n = cons.f0_dsmu/3 # smu_n = f0_dsmu/f0_mu0_factor, f0_mu0_factor = 3
+    f_slice_norm = torch.einsum('ijk,i,j -> ijk',f_slice,temp_factor,vperp1)*conv_factor_notemp
       
     ones_tensor = torch.ones(nbatch,nperp,npar).float().to(device)
       
