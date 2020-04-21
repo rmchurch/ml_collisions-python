@@ -42,6 +42,7 @@ val_rate = 1000
 datapath = '/scratch/gpfs/marcoam/ml_collisions/data/xgc1/ti272_JET_heat_load/'
 run_num = '00094/'
 lim = 150000
+use_vth = True #normalize momentum in check_properties to m*n*vth, instead of m*n*upar
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -276,16 +277,7 @@ def check_properties_each(f_slice, cons, temp, vol, sp):
       
     vth = torch.sqrt(temp*cons.sml_ev2j/cons.ptl_mass[sp]) 
     
-    vpar = np.linspace(-cons.f0_nvp,cons.f0_nvp,2*cons.f0_nvp+1)*cons.f0_dvp
-    vperp = np.linspace(0,cons.f0_nmu,cons.f0_nmu+1)*cons.f0_dsmu
-    vperp1 = vperp.copy()
-    vperp1[0] = vperp1[1]/3. #f0_mu0_factor
-    
-    
-#     print('vth',vth*torch.from_numpy(cons.f0_dsmu))
-#     print('vpar',torch.from_numpy(vpar)*vth[0])
-#     print('vperp',torch.from_numpy(vperp)*vth[0])
-    
+    vpar,vperp,vperp1 = create_vpa_vpe_grid(cons)    
     vpar = torch.tensor(vpar).double().to(device)
     vperp = torch.tensor(vperp).double().to(device)
     vperp1 = torch.tensor(vperp1).double().to(device)
@@ -316,9 +308,43 @@ def check_properties_each(f_slice, cons, temp, vol, sp):
                 
     return mass, momentum, energy
 
+
+def create_vpa_vpe_grid(cons):
+    vpar = np.linspace(-cons.f0_nvp,cons.f0_nvp,2*cons.f0_nvp+1)*cons.f0_dvp
+    vperp = np.linspace(0,cons.f0_nmu,cons.f0_nmu+1)*cons.f0_dsmu
+    vperp1 = vperp.copy()
+    vperp1[0] = vperp1[1]/3. #f0_mu0_factor
+    return vpar,vperp,verp1
+
+
+def make_local_temp(f,cons,temp,sp):
+    '''
+    Calculates local temperature. Based on f0_moments in mom_module.F90 from XGC-Devel
+    '''
+    mass = cons.ptl_mass[sp]
+    vth = torch.sqrt(temp*cons.sml_ev2j/mass) 
+
+    vpar,vperp,vperp1 = create_vpa_vpe_grid(cons)
+    vpar = torch.tensor(vpar).double().to(device)
+    vperp = torch.tensor(vperp).double().to(device)
+    vperp1 = torch.tensor(vperp1).double().to(device)
+
+    volfac = torch.ones(vperp.size,vpar.size).double().to(device)
+    volfac[0,:] = 0.5 #mu_vol
+    volfac[-1,:] = 0.5 #mu_vol
+
+
+    den = torch.einsum('ijk,jk->i',f,volfac) #not true den w/out f0_grid_vol_vonly. But this normalizes out for Tlocal
+    upar = torch.einsum('ijk,k,jk->i',f,vpar,volfac)/den*vth
+    Tpar = torch.einsum('ijk,k,jk->i',f,vpar**2,volfac)/den*temp - mass/cons.sml_ev2j*upar**2
+    Tperp = torch.einsum('ijk,j,jk->i',f,0.5*vperp**2,volfac)/den*temp
+    Tlocal = (Tpar + 2*Tperp)/3
+    return Tlocal
+
+
 # makes calls to individual df/f property calculation
 # computes more useful quantities as in col_f_core_m after the calls to col_f_convergence_eval 
-def check_properties_main(f,df,temp,vol,cons):
+def check_properties_main(f,df,temp,vol,cons,use_vth=False):
   
   masse = torch.from_numpy(np.array([cons.ptl_mass[0]])).to(device).double()
   massi = torch.from_numpy(np.array([cons.ptl_mass[1]])).to(device).double()
@@ -330,11 +356,20 @@ def check_properties_main(f,df,temp,vol,cons):
   #print('f')  
   ne,mome,ene = check_properties_each(f[:,0],cons,temp[:,0],vol[:,:,0],0)
   ni,momi,eni = check_properties_each(f[:,1],cons,temp[:,1],vol[:,:,1],1) 
-      
+
   dne_n = torch.abs(dne/ne)
   dni_n = torch.abs(dni/ni)
   
-  dp_p = torch.abs(dpi + dpe)/torch.max(torch.abs(momi + mome),1e-3*torch.max(massi,masse)*ne)
+  if use_vth:     
+    Te = make_local_temp(f,cons,temp[:,0],0)
+    Ti = make_local_temp(f,cons,temp[:,1],1)
+    vthe = torch.sqrt(Te*cons.sml_ev2j/masse) 
+    vthi = torch.sqrt(Ti*cons.sml_ev2j/massi) 
+    pvth = massi*ni*vthi + masse*ne*vthe
+    min_pvth = massi*ni*torch.sqrt(10*cons.sml_ev2j/massi) + masse*ne*torch.sqrt(10*cons.sml_ev2j/masse)
+    dp_p = torch.abs(dpi + dpe)/torch.max(pvth,min_pvth)
+  else:
+    dp_p = torch.abs(dpi + dpe)/torch.max(torch.abs(momi + mome),1e-3*torch.max(massi,masse)*ne)
   
   dw_w = torch.abs((dwi + dwe)/(eni + ene))
   
@@ -408,9 +443,11 @@ def train(trainloader,valloader,sp_flag,epoch,end,zvars,cons):
         outputs_nof = torch.cat((targets_nof_to_cat,outputs_nof_to_cat),1)
 
         masse_xgc,massi_xgc,mom_xgc,energy_xgc = check_properties_main(data_unnorm[:,:,:,:-1],\
-                                                                       targets_nof[:,:,:,:-1],temp,vol,cons)
+                                                                       targets_nof[:,:,:,:-1],temp,vol,cons,
+                                                                       use_vth=use_vth)
         masse_ml,massi_ml,mom_ml,energy_ml = check_properties_main(data_unnorm[:,:,:,:-1],\
-                                                                   outputs_nof[:,:,:,:-1],temp,vol,cons)
+                                                                   outputs_nof[:,:,:,:-1],temp,vol,cons,
+                                                                   use_vth=use_vth)
         
 	# only use ml properties for loss - keep track of xgc properties for comparison later 
         masse_loss = torch.sum(masse_ml)/nbatch
@@ -524,7 +561,8 @@ def validate(valloader,cons,zvars):
       outputs_nof = torch.cat((targets_nof_to_cat,outputs_nof_to_cat),1)
 
       masse_ml,massi_ml,mom_ml,energy_ml = check_properties_main(data_unnorm[:,:,:,:-1],\
-                                                                 outputs_nof[:,:,:,:-1],temp,vol,cons)  
+                                                                 outputs_nof[:,:,:,:-1],temp,vol,cons,
+                                                                 use_vth=use_vth)  
 
       masse_loss = torch.sum(masse_ml)/nbatch
       massi_loss = torch.sum(massi_ml)/nbatch
@@ -588,10 +626,12 @@ def test(f_test,df_test,temp_test,vol_test):
   
             props_test_xgc.append([torch.sum(each_prop).item()\
                                  for each_prop in check_properties_main(data_unnorm[:,:,:,:-1],\
-                                                                   targets_nof[:,:,:,:-1],temp,vol,cons)])         
+                                                                   targets_nof[:,:,:,:-1],temp,vol,cons)],\
+                                                                    use_vth=use_vth)         
             props_test_ml.append([torch.sum(each_prop).item()\
                                  for each_prop in check_properties_main(data_unnorm[:,:,:,:-1],\
-                                                                   outputs_nof[:,:,:,:-1],temp,vol,cons)])
+                                                                   outputs_nof[:,:,:,:-1],temp,vol,cons)],\
+                                                                   use_vth=use_vth)
                                 
             l2_loss = criterion(outputs[:,0],targets[:,1])  
             l2_error.append(l2_loss.item()*100)
