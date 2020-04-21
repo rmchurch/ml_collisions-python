@@ -314,7 +314,7 @@ def create_vpa_vpe_grid(cons):
     vperp = np.linspace(0,cons.f0_nmu,cons.f0_nmu+1)*cons.f0_dsmu
     vperp1 = vperp.copy()
     vperp1[0] = vperp1[1]/3. #f0_mu0_factor
-    return vpar,vperp,verp1
+    return vpar,vperp,vperp1
 
 
 def make_local_temp(f,cons,temp,sp):
@@ -329,7 +329,7 @@ def make_local_temp(f,cons,temp,sp):
     vperp = torch.tensor(vperp).double().to(device)
     vperp1 = torch.tensor(vperp1).double().to(device)
 
-    volfac = torch.ones(vperp.size,vpar.size).double().to(device)
+    volfac = torch.ones((vperp.size()[0],vpar.size()[0])).double().to(device)
     volfac[0,:] = 0.5 #mu_vol
     volfac[-1,:] = 0.5 #mu_vol
 
@@ -361,8 +361,8 @@ def check_properties_main(f,df,temp,vol,cons,use_vth=False):
   dni_n = torch.abs(dni/ni)
   
   if use_vth:     
-    Te = make_local_temp(f,cons,temp[:,0],0)
-    Ti = make_local_temp(f,cons,temp[:,1],1)
+    Te = make_local_temp(f[:,0],cons,temp[:,0],0)
+    Ti = make_local_temp(f[:,1],cons,temp[:,1],1)
     vthe = torch.sqrt(Te*cons.sml_ev2j/masse) 
     vthi = torch.sqrt(Ti*cons.sml_ev2j/massi) 
     pvth = massi*ni*vthi + masse*ne*vthe
