@@ -407,6 +407,10 @@ def train(trainloader,valloader,sp_flag,epoch,end,zvars,cons):
     l2_loss_vector = []
     cons_loss_vector = []
     val_loss_vector = []
+
+    if use_limited_l2:
+      vpar,vperp,_ = create_vpa_vpe_grid(cons)    
+      inds = np.where((vpa**2. + vperp**2.) < (1.5**2.))[0]
     
     running_loss = 0.0
     running_l2_loss = 0.0
@@ -455,7 +459,11 @@ def train(trainloader,valloader,sp_flag,epoch,end,zvars,cons):
         mom_loss = torch.sum(mom_ml)/nbatch
         energy_loss = torch.sum(energy_ml)/nbatch
 
-        l2_loss = criterion(outputs[:,0],targets[:,1])      
+        
+        if use_limited_l2:
+          l2_loss = criterion(outputs[inds,0],targets[inds,1])      
+        else:
+          l2_loss = criterion(outputs[:,0],targets[:,1])      
         
         if i % 100 == 99:
             print('masse',masse_loss.item(),'massi',massi_loss.item(),'mom',mom_loss.item(),'en',energy_loss.item(),'l2',l2_loss.item())
@@ -536,6 +544,10 @@ def validate(valloader,cons,zvars):
   print('      Running validation set')
   
   running_loss = 0.0
+
+  if use_limited_l2:
+    vpar,vperp,_ = create_vpa_vpe_grid(cons)    
+    inds = np.where((vpa**2. + vperp**2.) < (1.5**2.))[0]
   
   with torch.no_grad():
     for i, (data, targets, temp, vol) in enumerate(valloader):
@@ -569,7 +581,10 @@ def validate(valloader,cons,zvars):
       mom_loss = torch.sum(mom_ml)/nbatch
       energy_loss = torch.sum(energy_ml)/nbatch
                 
-      l2_loss = criterion(outputs[:,0],targets[:,1])  
+      if use_limited_l2:
+        l2_loss = criterion(outputs[inds,0],targets[inds,1])      
+      else:
+        l2_loss = criterion(outputs[:,0],targets[:,1])     
                   
       loss = l2_loss*loss_weights[0]\
             + masse_loss*loss_weights[1]\
@@ -595,6 +610,10 @@ def test(f_test,df_test,temp_test,vol_test):
     testloader = DataLoader(testset, batch_size=batch_size, 
                             shuffle=True, num_workers=4)
       
+    if use_limited_l2:
+      vpar,vperp,_ = create_vpa_vpe_grid(cons)    
+      inds = np.where((vpa**2. + vperp**2.) < (1.5**2.))[0]
+
     props_test_xgc = []
     props_test_ml = []
     
@@ -632,8 +651,10 @@ def test(f_test,df_test,temp_test,vol_test):
                                  for each_prop in check_properties_main(data_unnorm[:,:,:,:-1],\
                                                                    outputs_nof[:,:,:,:-1],temp,vol,cons)],\
                                                                    use_vth=use_vth)
-                                
-            l2_loss = criterion(outputs[:,0],targets[:,1])  
+            if use_limited_l2:             
+              l2_loss = criterion(outputs[inds,0],targets[inds,1])      
+            else:
+              l2_loss = criterion(outputs[:,0],targets[:,1])     
             l2_error.append(l2_loss.item()*100)
     
     cons_test_array = np.concatenate((np.array(props_test_xgc),np.array(props_test_ml)),axis=1)
