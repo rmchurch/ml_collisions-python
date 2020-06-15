@@ -43,6 +43,8 @@ datapath = '/scratch/gpfs/marcoam/ml_collisions/data/xgc1/ti272_JET_heat_load/'
 run_num = '00094/'
 lim = 150000
 use_vth = True #normalize momentum in check_properties to m*n*vth, instead of m*n*upar
+use_limited_l2 = True #use a limited area v_lim for the L2 calculation
+v_lim = 1.5
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -410,7 +412,8 @@ def train(trainloader,valloader,sp_flag,epoch,end,zvars,cons):
 
     if use_limited_l2:
       vpar,vperp,_ = create_vpa_vpe_grid(cons)    
-      inds = np.where((vpa**2. + vperp**2.) < (1.5**2.))[0]
+      vpar = np.concatenate([vpar,[vpar[-1]]])
+      inds = np.where((vpar[np.newaxis,:]**2. + vperp[:,np.newaxis]**2.) < (v_lim**2.))
     
     running_loss = 0.0
     running_l2_loss = 0.0
@@ -461,7 +464,7 @@ def train(trainloader,valloader,sp_flag,epoch,end,zvars,cons):
 
         
         if use_limited_l2:
-          l2_loss = criterion(outputs[inds,0],targets[inds,1])      
+          l2_loss = criterion(outputs[:,0,inds[0],inds[1]],targets[:,1,inds[0],inds[1]])      
         else:
           l2_loss = criterion(outputs[:,0],targets[:,1])      
         
@@ -547,7 +550,8 @@ def validate(valloader,cons,zvars):
 
   if use_limited_l2:
     vpar,vperp,_ = create_vpa_vpe_grid(cons)    
-    inds = np.where((vpa**2. + vperp**2.) < (1.5**2.))[0]
+    vpar = np.concatenate([vpar,[vpar[-1]]])
+    inds = np.where((vpar[np.newaxis,:]**2. + vperp[:,np.newaxis]**2.) < (v_lim**2.))
   
   with torch.no_grad():
     for i, (data, targets, temp, vol) in enumerate(valloader):
@@ -582,7 +586,7 @@ def validate(valloader,cons,zvars):
       energy_loss = torch.sum(energy_ml)/nbatch
                 
       if use_limited_l2:
-        l2_loss = criterion(outputs[inds,0],targets[inds,1])      
+        l2_loss = criterion(outputs[:,0,inds[0],inds[1]],targets[:,1,inds[0],inds[1]])      
       else:
         l2_loss = criterion(outputs[:,0],targets[:,1])     
                   
@@ -612,7 +616,8 @@ def test(f_test,df_test,temp_test,vol_test):
       
     if use_limited_l2:
       vpar,vperp,_ = create_vpa_vpe_grid(cons)    
-      inds = np.where((vpa**2. + vperp**2.) < (1.5**2.))[0]
+      vpar = np.concatenate([vpar,[vpar[-1]]])
+      inds = np.where((vpar[np.newaxis,:]**2. + vperp[:,np.newaxis]**2.) < (v_lim**2.))
 
     props_test_xgc = []
     props_test_ml = []
@@ -652,7 +657,7 @@ def test(f_test,df_test,temp_test,vol_test):
                                                                    outputs_nof[:,:,:,:-1],temp,vol,cons)],\
                                                                    use_vth=use_vth)
             if use_limited_l2:             
-              l2_loss = criterion(outputs[inds,0],targets[inds,1])      
+              l2_loss = criterion(outputs[:,0,inds[0],inds[1]],targets[:,1,inds[0],inds[1]])      
             else:
               l2_loss = criterion(outputs[:,0],targets[:,1])     
             l2_error.append(l2_loss.item()*100)
