@@ -1,0 +1,41 @@
+Compiling with libtorch to use a TorchScript model
+These instructions run on Traverse, using the ml_collisions-python repo
+R.M. Churchill, 2020/09/25
+
+
+This is a pain. cmake can be annoying.
+
+First, create a TorchScript traced model by:
+    1) python create_torchscript_model.py <path to Pytorch saved model>
+       e.g.
+       python create_torchscript_model.py auglag_best.pth.tar
+ 
+Next, to compile a cpp code which uses libtorch, do the following:
+    0) Load the anaconda3 module (can put this in your ~/.bashrc):
+       module load anaconda3
+
+    1) Setup your env. Currently use torch_source (has pytorch==1.5.0) by running:
+       conda activate /scratch/gpfs/rmc2/conda-envs/torch_source
+
+    2) From the ml_collisions-python/cpp folder, create a build directory:
+        mkdir build && cd build
+
+    3) Use cmake to create the makefiles:
+       cmake -DProtobuf_PROTOC_LIBRARY=$CONDA_PREFIX/lib/libprotoc.so \ 
+             -DProtobuf_LIBRARY=$CONDA_PREFIX/lib/libprotobuf.so \
+             -DProtobuf_INCLUDE_DIR=$CONDA_PREFIX/include \
+             -DCUDNN_LIBRARY=$CONDA_PREFIX/lib64/ \
+             -DCUDNN_INCLUDE_DIR=$CONDA_PREFIX/include/ \
+             -DCMAKE_C_COMPILER=gcc \
+             -DCMAKE_CXX_COMPILER=g++ \
+             -DCMAKE_PREFIX_PATH=$CONDA_PREFIX/lib/python3.7/site-packages/torch/ ..
+
+    4) Use cmake to build the executable:
+        cmake --build . --config Release
+
+    5) Run the executable in the build directory as:
+        ./test_model <path to torchscript model> <batch_size> 2>/dev/null
+        e.g.
+        ./test_model ../traced_auglag_best.pt 8 2>/dev/null
+
+        
